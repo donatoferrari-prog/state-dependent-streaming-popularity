@@ -1,6 +1,15 @@
-# state-dependent-streaming-popularity
-Replication materials for the study: **State-Dependent Associations in Streaming Popularity: Feature-Specific Heterogeneity in Digital Music Consumption** This repository contains the data and code required to reproduce the empirical analyses, robustness checks, tables, and figures reported in the revised manuscript submitted to *Applied Stochastic Models in Business and Industry*. ## Repository structure
-text
+# State-Dependent Associations in Streaming Popularity
+
+Replication materials for the study:
+
+**State-Dependent Associations in Streaming Popularity:  
+Feature-Specific Heterogeneity in Digital Music Consumption**
+
+This repository contains the data and code required to reproduce the empirical analyses, robustness checks, tables, and figures reported in the revised manuscript submitted to *Applied Stochastic Models in Business and Industry*.
+
+## Repository structure
+
+```text
 .
 ├── code/
 │   └── replication_ASMBI_revised.do
@@ -9,28 +18,11 @@ text
 │   └── charts analysis_working.dta
 │
 └── output/
-## Software requirements The analysis was conducted using **Stata 18**. The replication file begins with:
-stata
-version 18
-markdown The replication file begins with:
-## Data
+```
 
-The analytical dataset used in the replication package is:
-text data/charts analysis_working.dta
-The dataset contains weekly streaming-chart observations for the Italian market together with the audio-feature variables used in the analysis.
+## Software requirements
 
-The original dataset is never overwritten by the replication code. All derived variables used in the analysis are reconstructed directly within the do-file.
-
-The data combine weekly streaming-chart information with audio descriptors obtained from the sources documented in the manuscript, including Reccobeats, Essentia, and external matched datasets.
-
-## Replication instructions
-
-1. Download or clone this repository.
-
-2. Set the Stata working directory to the root folder of the repository.
-
-For example:
-stata cd "PATH_TO_REPOSITORY/state-dependent-streaming-popularity"
+The analysis was conducted using **Stata 18**.
 
 The replication file begins with:
 
