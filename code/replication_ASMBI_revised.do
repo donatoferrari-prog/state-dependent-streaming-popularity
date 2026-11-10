@@ -388,39 +388,89 @@ bysort track_num: egen double best_position_track = min(position)
 egen byte tag_track_selection = tag(track_num)
 keep if tag_track_selection == 1
 
+
 display "============================================================"
 display "SAMPLE-SELECTION DIAGNOSTICS"
 display "============================================================"
 
+
+*------------------------------------------------------------
+* Total number of tracks
+*------------------------------------------------------------
+
 count
 display "Expected total tracks: 8956"
+
+
+*------------------------------------------------------------
+* Tracks entering / not entering the main sample
+*------------------------------------------------------------
 
 count if enters_main == 1
 display "Expected tracks entering main sample: 6231"
 
 count if enters_main == 0
+scalar n_excluded_total = r(N)
 display "Expected excluded tracks: 2725"
 
-* Most exclusions should be mechanically due to one appearance only
+
+*------------------------------------------------------------
+* Composition of excluded tracks
+*------------------------------------------------------------
+
 count if enters_main == 0 & n_obs_full == 1
+scalar n_excluded_one = r(N)
 display "Expected excluded one-appearance tracks: 2578"
 
 count if enters_main == 0 & n_obs_full >= 2
 display "Expected excluded tracks with >=2 appearances: 147"
 
-* Among tracks appearing at least twice
+
+*------------------------------------------------------------
+* Tracks observed at least twice
+*------------------------------------------------------------
+
 count if n_obs_full >= 2
+scalar n_atleast2 = r(N)
 display "Expected tracks with >=2 appearances: 6378"
 
 count if enters_main == 1 & n_obs_full >= 2
+scalar n_included_atleast2 = r(N)
 display "Expected included among tracks with >=2 appearances: 6231"
 
+
+*------------------------------------------------------------
+* Percentages reported in the revised manuscript
+*------------------------------------------------------------
+
+scalar pct_excluded_one = ///
+    100 * n_excluded_one / n_excluded_total
+
+scalar pct_included_atleast2 = ///
+    100 * n_included_atleast2 / n_atleast2
+
+display "============================================================"
+display "SAMPLE-SELECTION PERCENTAGES"
+display "Excluded tracks with one appearance (%) = " ///
+    pct_excluded_one
+display "Expected ≈ 94.61%"
+
+display "Tracks with >=2 appearances entering main sample (%) = " ///
+    pct_included_atleast2
+display "Expected ≈ 97.70%"
+display "============================================================"
+
+
+*------------------------------------------------------------
 * Compare included and excluded tracks
+*------------------------------------------------------------
+
 tabstat n_obs_full mean_streams_track max_streams_track ///
     best_position_track, ///
     by(enters_main) ///
     statistics(n mean p50 min max) ///
     columns(statistics)
+
 
 *------------------------------------------------------------
 * Export track-level sample-selection diagnostics
@@ -432,7 +482,6 @@ export delimited using ///
 
 
 restore
-
 *------------------------------------------------------------
 * 08.4 Feature-source provenance at TRACK level
 *------------------------------------------------------------
@@ -1905,7 +1954,11 @@ export delimited using ///
     "output/table_main_joint.csv", ///
     replace
 
-
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Main joint model") ///
+    firstrow(variables) ///
+    replace
 
 restore
 
@@ -1925,16 +1978,92 @@ export excel using ///
     firstrow(variables) ///
     sheetreplace
 
-export excel using ///
-    "output/final_tables.xlsx", ///
-    sheet("Main joint model") ///
-    firstrow(variables) ///
-    replace
+
 
 restore
 
 *==========================================================================
-* 21.3 BENCHMARK MODEL COMPARISON
+* 21.3 SAMPLE-SELECTION SUMMARY
+*==========================================================================
+
+preserve
+
+import delimited using ///
+    "output/sample_selection_track_level.csv", ///
+    clear
+
+collapse ///
+    (count) n_tracks=track_num ///
+    (mean) mean_n_obs=n_obs_full ///
+           mean_streams=mean_streams_track ///
+           mean_max_streams=max_streams_track ///
+           mean_best_position=best_position_track, ///
+    by(enters_main)
+
+label define enterslbl ///
+    0 "Excluded from main sample" ///
+    1 "Included in main sample"
+
+label values enters_main enterslbl
+
+format mean_n_obs %9.3f
+format mean_streams mean_max_streams %12.2f
+format mean_best_position %9.2f
+
+list, noobs clean
+
+export delimited using ///
+    "output/table_sample_selection_summary.csv", ///
+    replace
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Sample selection summary") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
+
+*==========================================================================
+* 21.3a SAMPLE-SELECTION KEY PERCENTAGES
+*==========================================================================
+
+preserve
+
+clear
+set obs 2
+
+gen str60 indicator = ""
+
+replace indicator = ///
+    "Excluded tracks with exactly one appearance" in 1
+
+replace indicator = ///
+    "Tracks with >=2 appearances entering main sample" in 2
+
+gen double percentage = .
+
+replace percentage = pct_excluded_one in 1
+replace percentage = pct_included_atleast2 in 2
+
+format percentage %9.2f
+
+list, noobs clean
+
+export delimited using ///
+    "output/table_sample_selection_percentages.csv", ///
+    replace
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Selection percentages") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
+
+*==========================================================================
+* 21.4 BENCHMARK MODEL COMPARISON
 *     Reviewer request: compare persistence-only and full model fit
 *==========================================================================
 
@@ -2012,7 +2141,7 @@ export excel using ///
 restore
 
 *==========================================================================
-* 21.4 PRACTICAL EFFECT-SIZE TABLE
+* 21.5 PRACTICAL EFFECT-SIZE TABLE
 *     Reviewer request: express associations as percentage
 *     differences in weekly streams for a +1 SD feature change
 *==========================================================================
@@ -2072,7 +2201,7 @@ export excel using ///
 restore
 
 *==========================================================================
-* 21.5 ZERO-CROSSING TABLE
+* 21.6 ZERO-CROSSING TABLE
 *     Reviewer request: report coefficient ratios only when
 *     interaction terms are sufficiently precise
 *==========================================================================
@@ -2160,7 +2289,7 @@ restore
 estimates restore revised_joint
 
 *==========================================================================
-* 21.6 EMPIRICAL SUPPORT AROUND ZERO-CROSSINGS
+* 21.7 EMPIRICAL SUPPORT AROUND ZERO-CROSSINGS
 *==========================================================================
 
 tempname supportpost
@@ -2264,7 +2393,7 @@ export excel using ///
 restore
 
 *==========================================================================
-* 21.7 SPLINE FUNCTIONAL-FORM TESTS
+* 21.8 SPLINE FUNCTIONAL-FORM TESTS
 *     Reviewer request: assess departures from linear state dependence
 *==========================================================================
 
@@ -2377,7 +2506,7 @@ restore
 estimates restore revised_joint
 
 *==========================================================================
-* 21.8 FEATURE-SPECIFIC MODELS
+* 21.9 FEATURE-SPECIFIC MODELS
 *==========================================================================
 
 tempname fspost
@@ -2477,7 +2606,7 @@ restore
 
 
 *==========================================================================
-* 21.9 ROBUSTNESS MATRIX
+* 21.10 ROBUSTNESS MATRIX
 *
 * Each row reports the four state-dependence interaction coefficients
 * and their p-values.
@@ -2826,7 +2955,92 @@ display "============================================================"
 display "FINAL TABLES EXPORTED"
 display "============================================================"
 
+*==========================================================================
+* 21.11 TRACK-HISTORY LENGTH DIAGNOSTICS
+*==========================================================================
 
+tempname histpost
+tempfile histtable
+
+postfile `histpost' ///
+    str40 category ///
+    long n_tracks ///
+    using `histtable', replace
+
+
+quietly count if ///
+    tag_track_obs == 1 & ///
+    n_obs_track_revised == 1
+
+post `histpost' ///
+    ("Exactly 1 usable observation") ///
+    (r(N))
+
+
+quietly count if ///
+    tag_track_obs == 1 & ///
+    n_obs_track_revised == 2
+
+post `histpost' ///
+    ("Exactly 2 usable observations") ///
+    (r(N))
+
+
+quietly count if ///
+    tag_track_obs == 1 & ///
+    n_obs_track_revised == 3
+
+post `histpost' ///
+    ("Exactly 3 usable observations") ///
+    (r(N))
+
+
+quietly count if ///
+    tag_track_obs == 1 & ///
+    n_obs_track_revised < 4
+
+post `histpost' ///
+    ("Fewer than 4 usable observations") ///
+    (r(N))
+
+
+quietly count if ///
+    tag_track_obs == 1 & ///
+    n_obs_track_revised < 8
+
+post `histpost' ///
+    ("Fewer than 8 usable observations") ///
+    (r(N))
+
+
+quietly count if ///
+    tag_track_obs == 1 & ///
+    n_obs_track_revised >= 8
+
+post `histpost' ///
+    ("At least 8 usable observations") ///
+    (r(N))
+
+postclose `histpost'
+
+
+preserve
+
+use `histtable', clear
+
+list, noobs clean
+
+export delimited using ///
+    "output/table_track_history_lengths.csv", ///
+    replace
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Track histories") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
 
 *==========================================================================
 * 22. EXPORT FINAL FIGURES
