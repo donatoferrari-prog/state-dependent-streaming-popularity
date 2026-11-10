@@ -430,11 +430,6 @@ export delimited using ///
     "output/sample_selection_track_level.csv", ///
     replace
 
-export excel using ///
-    "output/final_tables.xlsx", ///
-    sheet("Sample selection") ///
-    firstrow(variables) ///
-    sheetreplace
 
 restore
 
@@ -584,6 +579,12 @@ test ///
     c.nov_loud#c.c_lag ///
     c.nov_complex#c.c_lag ///
     c.nov_onset#c.c_lag
+
+scalar joint_audio_F = r(F)
+scalar joint_audio_p = r(p)
+
+display "Joint F statistic = " joint_audio_F
+display "Joint p-value     = " joint_audio_p
 
 display "Expected joint test: F(8,6230) ≈ 14.34, p < 0.001"
 
@@ -1845,7 +1846,7 @@ display "============================================================"
 *==========================================================================
 
 display "============================================================"
-display "SECTION 20 - EXPORT FINAL TABLES"
+display "SECTION 21 - EXPORT FINAL TABLES"
 display "============================================================"
 
 * Create portable output directory
@@ -1924,6 +1925,12 @@ export excel using ///
     firstrow(variables) ///
     sheetreplace
 
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Main joint model") ///
+    firstrow(variables) ///
+    replace
+
 restore
 
 *==========================================================================
@@ -1969,6 +1976,28 @@ use `benchtable', clear
 format r2 adj_r2 rmse %9.6f
 
 list, noobs clean
+
+* Joint significance test of the eight audio-feature terms
+gen double joint_F = .
+gen double joint_p = .
+
+replace joint_F = joint_audio_F in 2
+replace joint_p = joint_audio_p in 2
+
+format joint_F %9.3f
+format joint_p %9.4f
+
+* Incremental fit statistics reported in the revised manuscript
+gen double delta_r2 = .
+gen double rmse_reduction_pct = .
+
+replace delta_r2 = r2[2] - r2[1] in 2
+
+replace rmse_reduction_pct = ///
+    100 * (rmse[1] - rmse[2]) / rmse[1] in 2
+
+format delta_r2 %9.6f
+format rmse_reduction_pct %9.4f
 
 export delimited using ///
     "output/table_benchmark_comparison.csv", ///
@@ -2235,7 +2264,120 @@ export excel using ///
 restore
 
 *==========================================================================
-* 21.7 FEATURE-SPECIFIC MODELS
+* 21.7 SPLINE FUNCTIONAL-FORM TESTS
+*     Reviewer request: assess departures from linear state dependence
+*==========================================================================
+
+tempname splinepost
+tempfile splinetable
+
+postfile `splinepost' ///
+    str30 test ///
+    double F_stat pvalue r2 rmse ///
+    using `splinetable', replace
+
+
+estimates restore spline_joint
+
+scalar spline_r2   = e(r2)
+scalar spline_rmse = e(rmse)
+
+
+* Danceability nonlinear components
+test ///
+    c.nov_dance#c.spl2 ///
+    c.nov_dance#c.spl3
+
+post `splinepost' ///
+    ("Danceability") ///
+    (r(F)) ///
+    (r(p)) ///
+    (spline_r2) ///
+    (spline_rmse)
+
+
+* Loudness nonlinear components
+test ///
+    c.nov_loud#c.spl2 ///
+    c.nov_loud#c.spl3
+
+post `splinepost' ///
+    ("Loudness") ///
+    (r(F)) ///
+    (r(p)) ///
+    (spline_r2) ///
+    (spline_rmse)
+
+
+* Dynamic-complexity nonlinear components
+test ///
+    c.nov_complex#c.spl2 ///
+    c.nov_complex#c.spl3
+
+post `splinepost' ///
+    ("Dynamic complexity") ///
+    (r(F)) ///
+    (r(p)) ///
+    (spline_r2) ///
+    (spline_rmse)
+
+
+* Onset-rate nonlinear components
+test ///
+    c.nov_onset#c.spl2 ///
+    c.nov_onset#c.spl3
+
+post `splinepost' ///
+    ("Onset rate") ///
+    (r(F)) ///
+    (r(p)) ///
+    (spline_r2) ///
+    (spline_rmse)
+
+
+* Joint test of all nonlinear interaction components
+test ///
+    c.nov_dance#c.spl2 c.nov_dance#c.spl3 ///
+    c.nov_loud#c.spl2 c.nov_loud#c.spl3 ///
+    c.nov_complex#c.spl2 c.nov_complex#c.spl3 ///
+    c.nov_onset#c.spl2 c.nov_onset#c.spl3
+
+post `splinepost' ///
+    ("All nonlinear terms") ///
+    (r(F)) ///
+    (r(p)) ///
+    (spline_r2) ///
+    (spline_rmse)
+
+postclose `splinepost'
+
+
+preserve
+
+use `splinetable', clear
+
+format F_stat %9.3f
+format pvalue %9.4f
+format r2 rmse %9.6f
+
+list, noobs clean
+
+export delimited using ///
+    "output/table_spline_tests.csv", ///
+    replace
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Spline tests") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
+
+estimates restore revised_joint
+
+*==========================================================================
+* 21.8 FEATURE-SPECIFIC MODELS
 *==========================================================================
 
 tempname fspost
@@ -2335,7 +2477,7 @@ restore
 
 
 *==========================================================================
-* 21.8 ROBUSTNESS MATRIX
+* 21.9 ROBUSTNESS MATRIX
 *
 * Each row reports the four state-dependence interaction coefficients
 * and their p-values.
@@ -2691,7 +2833,7 @@ display "============================================================"
 *==========================================================================
 
 display "============================================================"
-display "SECTION 21 - EXPORT FINAL FIGURES"
+display "SECTION 22 - EXPORT FINAL FIGURES"
 display "============================================================"
 
 *------------------------------------------------------------
