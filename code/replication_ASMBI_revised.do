@@ -95,6 +95,21 @@ summ streams log_streams_check
 * from the contemporaneous weekly chart mean.
 *
 * nov_it = x_i - mean(x_t)
+
+*
+* Interpretation:
+* nov_it combines a track-specific audio characteristic with the
+* contemporaneous composition of the weekly chart. A positive value
+* indicates that track i has a higher feature value than the average
+* track appearing in the chart in week t; a negative value indicates
+* the opposite.
+*
+* Consequently, the interaction nov_it × c_lag does not represent
+* a purely time-invariant track characteristic. It measures whether
+* the association between a track's relative audio position within
+* the contemporaneous weekly chart and current streaming popularity
+* varies with that track's prior-week popularity state.
+
 *==========================================================================
 
 *-----------------------------
@@ -327,7 +342,104 @@ egen tag_track_obs = tag(track_num) if sample_weekly == 1
 summ n_obs_track_revised if tag_track_obs == 1, detail
 
 *------------------------------------------------------------
-* 08.3 Feature-source provenance at TRACK level
+* Track-history length diagnostics
+* Reviewer request: document the prevalence of short histories
+*------------------------------------------------------------
+
+count if tag_track_obs == 1 & n_obs_track_revised == 1
+display "Expected tracks with 1 usable observation: 1022"
+
+count if tag_track_obs == 1 & n_obs_track_revised == 2
+display "Expected tracks with 2 usable observations: 605"
+
+count if tag_track_obs == 1 & n_obs_track_revised == 3
+display "Expected tracks with 3 usable observations: 442"
+
+count if tag_track_obs == 1 & n_obs_track_revised < 4
+display "Expected tracks with fewer than 4 usable observations: 2069"
+
+count if tag_track_obs == 1 & n_obs_track_revised < 8
+display "Expected tracks with fewer than 8 usable observations: 3063"
+
+count if tag_track_obs == 1 & n_obs_track_revised >= 8
+display "Expected tracks with at least 8 usable observations: 3168"
+
+*------------------------------------------------------------
+* 08.3 Sample-selection diagnostics
+*      Reviewer request: assess selection induced by the
+*      exact-week lag requirement and external validity
+*------------------------------------------------------------
+
+preserve
+
+* Full number of chart appearances for each track
+bysort track_num: gen n_obs_full = _N
+
+* Indicator: track contributes at least one observation
+* to the main exact-week-lag estimation sample
+bysort track_num: egen byte enters_main = max(sample_weekly)
+
+* Track-level descriptive characteristics
+bysort track_num: egen double mean_streams_track = mean(streams)
+bysort track_num: egen double max_streams_track  = max(streams)
+bysort track_num: egen double best_position_track = min(position)
+
+* Keep one observation per track
+egen byte tag_track_selection = tag(track_num)
+keep if tag_track_selection == 1
+
+display "============================================================"
+display "SAMPLE-SELECTION DIAGNOSTICS"
+display "============================================================"
+
+count
+display "Expected total tracks: 8956"
+
+count if enters_main == 1
+display "Expected tracks entering main sample: 6231"
+
+count if enters_main == 0
+display "Expected excluded tracks: 2725"
+
+* Most exclusions should be mechanically due to one appearance only
+count if enters_main == 0 & n_obs_full == 1
+display "Expected excluded one-appearance tracks: 2578"
+
+count if enters_main == 0 & n_obs_full >= 2
+display "Expected excluded tracks with >=2 appearances: 147"
+
+* Among tracks appearing at least twice
+count if n_obs_full >= 2
+display "Expected tracks with >=2 appearances: 6378"
+
+count if enters_main == 1 & n_obs_full >= 2
+display "Expected included among tracks with >=2 appearances: 6231"
+
+* Compare included and excluded tracks
+tabstat n_obs_full mean_streams_track max_streams_track ///
+    best_position_track, ///
+    by(enters_main) ///
+    statistics(n mean p50 min max) ///
+    columns(statistics)
+
+*------------------------------------------------------------
+* Export track-level sample-selection diagnostics
+*------------------------------------------------------------
+
+export delimited using ///
+    "output/sample_selection_track_level.csv", ///
+    replace
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Sample selection") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
+
+*------------------------------------------------------------
+* 08.4 Feature-source provenance at TRACK level
 *------------------------------------------------------------
 
 capture drop tag_track_source
@@ -343,7 +455,7 @@ tab af_source if tag_track_source == 1, missing
 count if tag_track_source == 1
 
 *------------------------------------------------------------
-* 08.4 Compact provenance table
+* 08.5 Compact provenance table
 *------------------------------------------------------------
 
 preserve
@@ -368,7 +480,7 @@ list af_source n_tracks pct_tracks, ///
 restore
 
 *------------------------------------------------------------
-* 08.5 Source-specific distributions
+* 08.6 Source-specific distributions
 *     Used to document comparability across providers
 *------------------------------------------------------------
 
@@ -379,7 +491,7 @@ tabstat af_danceability af_loudness ///
     columns(statistics)
 
 *------------------------------------------------------------
-* 08.6 Simple feature correlations
+* 08.7 Simple feature correlations
 *------------------------------------------------------------
 
 pwcorr nov_dance nov_loud nov_complex nov_onset ///
@@ -412,7 +524,71 @@ reg log_streams_check ///
 estimates store revised_joint
 
 *------------------------------------------------------------
-* 09.1 Replication checks
+* 09.1 Persistence-only benchmark
+*     Reviewer request: compare the full model with a model
+*     containing only prior-week popularity and week FE
+*------------------------------------------------------------
+
+reg log_streams_check ///
+    c_lag ///
+    i.week_fe ///
+    if sample_weekly == 1, ///
+    vce(cluster track_num)
+
+estimates store persistence_benchmark
+
+display "============================================================"
+display "PERSISTENCE-ONLY BENCHMARK"
+display "Expected R2      ≈ 0.97118476"
+display "Expected Adj R2  ≈ 0.97099912"
+display "Expected RMSE    ≈ 0.18103223"
+display "============================================================"
+
+display "Benchmark R2     = " e(r2)
+display "Benchmark Adj R2 = " e(r2_a)
+display "Benchmark RMSE   = " e(rmse)
+
+scalar r2_benchmark   = e(r2)
+scalar rmse_benchmark = e(rmse)
+
+
+* Restore full model and compare fit
+estimates restore revised_joint
+
+display "Full-model R2     = " e(r2)
+display "Full-model Adj R2 = " e(r2_a)
+display "Full-model RMSE   = " e(rmse)
+
+scalar r2_full   = e(r2)
+scalar rmse_full = e(rmse)
+
+
+* Incremental fit of the audio-feature terms
+scalar delta_r2 = r2_full - r2_benchmark
+
+scalar rmse_reduction_pct = ///
+    100 * (rmse_benchmark - rmse_full) / rmse_benchmark
+
+display "============================================================"
+display "INCREMENTAL FIT OF AUDIO FEATURES"
+display "Delta R2              = " delta_r2
+display "Expected Delta R2     ≈ 0.00012"
+display "RMSE reduction (%)    = " rmse_reduction_pct
+display "Expected reduction    ≈ 0.2046%"
+display "============================================================"
+
+* Joint test of the eight added audio-feature terms
+test ///
+    nov_dance nov_loud nov_complex nov_onset ///
+    c.nov_dance#c.c_lag ///
+    c.nov_loud#c.c_lag ///
+    c.nov_complex#c.c_lag ///
+    c.nov_onset#c.c_lag
+
+display "Expected joint test: F(8,6230) ≈ 14.34, p < 0.001"
+
+*------------------------------------------------------------
+* 09.2 Replication checks
 *------------------------------------------------------------
 
 display "Expected N = 104986"
@@ -588,28 +764,101 @@ estimates restore revised_joint
 margins, dydx(nov_onset) ///
     at(c_lag=(`p10' `p25' `p50' `p75' `p90'))
 
-
 *------------------------------------------------------------
-* 11.3 Zero-crossings
+* 11.3 Practical magnitude: one-SD percentage differences
+*      Reviewer request: translate effects into realistic
+*      percentage differences in weekly streams
 *------------------------------------------------------------
 
 estimates restore revised_joint
 
-nlcom (dance_zero: ///
-    -_b[nov_dance] / _b[c.nov_dance#c.c_lag])
+* Standard deviations of novelty measures in the main sample
+quietly summarize nov_loud if sample_weekly == 1
+scalar sd_loud = r(sd)
+
+quietly summarize nov_onset if sample_weekly == 1
+scalar sd_onset = r(sd)
+
+display "Expected SD loudness novelty ≈ 2.760377"
+display "Expected SD onset-rate novelty ≈ 0.7994258"
+
+
+* Retrieve coefficients from preferred joint specification
+scalar b_loud = _b[nov_loud]
+scalar g_loud = _b[c.nov_loud#c.c_lag]
+
+scalar b_onset = _b[nov_onset]
+scalar g_onset = _b[c.nov_onset#c.c_lag]
+
+
+*------------------------------------------------------------
+* Loudness: percentage difference for +1 SD
+*------------------------------------------------------------
+
+scalar loud_pct_p25 = ///
+    100 * (exp(sd_loud * (b_loud + g_loud*`p25')) - 1)
+
+scalar loud_pct_p50 = ///
+    100 * (exp(sd_loud * (b_loud + g_loud*`p50')) - 1)
+
+scalar loud_pct_p75 = ///
+    100 * (exp(sd_loud * (b_loud + g_loud*`p75')) - 1)
+
+display "============================================================"
+display "LOUDNESS: +1 SD PERCENTAGE DIFFERENCE IN WEEKLY STREAMS"
+display "P25 = " loud_pct_p25 "   Expected ≈ 0.212%"
+display "P50 = " loud_pct_p50 "   Expected ≈ 0.427%"
+display "P75 = " loud_pct_p75 "   Expected ≈ 0.575%"
+display "============================================================"
+
+
+*------------------------------------------------------------
+* Onset rate: percentage difference for +1 SD
+*------------------------------------------------------------
+
+scalar onset_pct_p25 = ///
+    100 * (exp(sd_onset * (b_onset + g_onset*`p25')) - 1)
+
+scalar onset_pct_p50 = ///
+    100 * (exp(sd_onset * (b_onset + g_onset*`p50')) - 1)
+
+scalar onset_pct_p75 = ///
+    100 * (exp(sd_onset * (b_onset + g_onset*`p75')) - 1)
+
+display "============================================================"
+display "ONSET RATE: +1 SD PERCENTAGE DIFFERENCE IN WEEKLY STREAMS"
+display "P25 = " onset_pct_p25 "   Expected ≈ -0.422%"
+display "P50 = " onset_pct_p50 "   Expected ≈ -0.886%"
+display "P75 = " onset_pct_p75 "   Expected ≈ -1.205%"
+display "============================================================"
+
+*------------------------------------------------------------
+* 11.4 Zero-crossings
+*------------------------------------------------------------
+
+estimates restore revised_joint
+
+* Zero-crossings are reported only for features with
+* precisely estimated interaction terms.
+* Danceability and dynamic complexity are omitted because
+* coefficient-ratio inference is unreliable when the
+* interaction coefficient in the denominator is imprecise.
 
 nlcom (loud_zero: ///
     -_b[nov_loud] / _b[c.nov_loud#c.c_lag])
 
-nlcom (complex_zero: ///
-    -_b[nov_complex] / _b[c.nov_complex#c.c_lag])
+display "Expected loudness zero-crossing ≈ -1.110"
+display "Expected delta-method 95% CI ≈ [-1.888, -0.332]"
 
 nlcom (onset_zero: ///
     -_b[nov_onset] / _b[c.nov_onset#c.c_lag])
 
+display "Expected onset-rate zero-crossing ≈ -1.054"
+display "Expected delta-method 95% CI ≈ [-1.392, -0.717]"
+
 
 *------------------------------------------------------------
-* 11.4 Empirical support around relevant zero-crossings
+* 11.5 Empirical support around relevant zero-crossings
 *------------------------------------------------------------
 
 count if c_lag < -1.110257 & sample_weekly == 1
@@ -626,7 +875,7 @@ display "Expected observations above onset zero-crossing: 86152"
 
 
 *------------------------------------------------------------
-* 11.5 P5-P95 range for marginal-effect figures
+* 11.6 P5-P95 range for marginal-effect figures
 *------------------------------------------------------------
 
 summ c_lag if sample_weekly == 1, detail
@@ -639,7 +888,7 @@ display "P95 = " `p95'
 
 
 *------------------------------------------------------------
-* 11.6 Loudness marginal-effect figure
+* 11.7 Loudness marginal-effect figure
 *------------------------------------------------------------
 
 estimates restore revised_joint
@@ -661,7 +910,7 @@ marginsplot, ///
 
 
 *------------------------------------------------------------
-* 11.7 Onset-rate marginal-effect figure
+* 11.8 Onset-rate marginal-effect figure
 *------------------------------------------------------------
 
 estimates restore revised_joint
@@ -685,6 +934,158 @@ marginsplot, ///
 display "============================================================"
 display "FEATURE-SPECIFIC AND MARGINAL-EFFECT BLOCK COMPLETED"
 display "============================================================"
+
+*------------------------------------------------------------
+* 11.9 Flexible functional-form check: restricted cubic spline
+*      Reviewer request: assess the linearity assumption
+*------------------------------------------------------------
+
+* Four knots: P10, P35, P65, P90 of centered prior-week popularity
+mkspline spl = c_lag if sample_weekly == 1, ///
+    cubic knots(-1.7288179 -0.06886946 0.43659806 1.2063851)
+
+* Joint spline specification
+reg log_streams_check ///
+    spl1 spl2 spl3 ///
+    nov_dance nov_loud nov_complex nov_onset ///
+    c.nov_dance#c.spl1 c.nov_dance#c.spl2 c.nov_dance#c.spl3 ///
+    c.nov_loud#c.spl1 c.nov_loud#c.spl2 c.nov_loud#c.spl3 ///
+    c.nov_complex#c.spl1 c.nov_complex#c.spl2 c.nov_complex#c.spl3 ///
+    c.nov_onset#c.spl1 c.nov_onset#c.spl2 c.nov_onset#c.spl3 ///
+    i.week_fe ///
+    if sample_weekly == 1, ///
+    vce(cluster track_num)
+
+estimates store spline_joint
+
+display "============================================================"
+display "RESTRICTED CUBIC SPLINE MODEL"
+display "Expected R2   ≈ 0.9714"
+display "Expected RMSE ≈ 0.18026"
+display "============================================================"
+
+* Test nonlinear interaction components for each feature
+test ///
+    c.nov_dance#c.spl2 ///
+    c.nov_dance#c.spl3
+display "Expected Danceability nonlinear test: F ≈ 3.75, p ≈ 0.024"
+
+test ///
+    c.nov_loud#c.spl2 ///
+    c.nov_loud#c.spl3
+display "Expected Loudness nonlinear test: F ≈ 1.75, p ≈ 0.173"
+
+test ///
+    c.nov_complex#c.spl2 ///
+    c.nov_complex#c.spl3
+display "Expected Complexity nonlinear test: F ≈ 2.31, p ≈ 0.099"
+
+test ///
+    c.nov_onset#c.spl2 ///
+    c.nov_onset#c.spl3
+display "Expected Onset-rate nonlinear test: F ≈ 5.37, p ≈ 0.005"
+
+* Joint test of all eight nonlinear interaction components
+test ///
+    c.nov_dance#c.spl2 c.nov_dance#c.spl3 ///
+    c.nov_loud#c.spl2 c.nov_loud#c.spl3 ///
+    c.nov_complex#c.spl2 c.nov_complex#c.spl3 ///
+    c.nov_onset#c.spl2 c.nov_onset#c.spl3
+
+display "Expected joint nonlinear test: F(8,6230) ≈ 3.30, p < 0.001"
+
+*------------------------------------------------------------
+* 11.10 Linear-versus-spline comparison figures
+*       Reviewer request: visualize flexible functional form
+*------------------------------------------------------------
+
+preserve
+
+clear
+set obs 100
+
+* Evaluation grid over the central empirical support
+gen double c_lag_grid = ///
+    -1.7288179 + (_n-1) * ///
+    (1.2063851 - (-1.7288179)) / 99
+
+* Reconstruct spline basis on the evaluation grid
+mkspline spl = c_lag_grid, ///
+    cubic knots(-1.7288179 -0.06886946 0.43659806 1.2063851)
+
+
+*------------------------------------------------------------
+* Onset rate: spline marginal association
+*------------------------------------------------------------
+
+estimates restore spline_joint
+
+gen double onset_spline = ///
+    _b[nov_onset] + ///
+    _b[c.nov_onset#c.spl1] * spl1 + ///
+    _b[c.nov_onset#c.spl2] * spl2 + ///
+    _b[c.nov_onset#c.spl3] * spl3
+
+
+* Linear specification
+estimates restore revised_joint
+
+gen double onset_linear = ///
+    _b[nov_onset] + ///
+    _b[c.nov_onset#c.c_lag] * c_lag_grid
+
+
+twoway ///
+    (line onset_linear c_lag_grid) ///
+    (line onset_spline c_lag_grid), ///
+    yline(0, lpattern(dash)) ///
+    xtitle("Centered log prior-week streams") ///
+    ytitle("Marginal association of onset rate") ///
+    legend(order(1 "Linear" 2 "Restricted cubic spline")) ///
+    title("Onset rate: linear versus spline specification") ///
+    name(g_onset_spline, replace)
+
+graph export ///
+    "output/linearvsspline.png", ///
+    width(2400) replace
+
+
+*------------------------------------------------------------
+* Loudness: spline marginal association
+*------------------------------------------------------------
+
+estimates restore spline_joint
+
+gen double loud_spline = ///
+    _b[nov_loud] + ///
+    _b[c.nov_loud#c.spl1] * spl1 + ///
+    _b[c.nov_loud#c.spl2] * spl2 + ///
+    _b[c.nov_loud#c.spl3] * spl3
+
+
+* Linear specification
+estimates restore revised_joint
+
+gen double loud_linear = ///
+    _b[nov_loud] + ///
+    _b[c.nov_loud#c.c_lag] * c_lag_grid
+
+
+twoway ///
+    (line loud_linear c_lag_grid) ///
+    (line loud_spline c_lag_grid), ///
+    yline(0, lpattern(dash)) ///
+    xtitle("Centered log prior-week streams") ///
+    ytitle("Marginal association of loudness") ///
+    legend(order(1 "Linear" 2 "Restricted cubic spline")) ///
+    title("Loudness: linear versus spline specification") ///
+    name(g_loud_spline, replace)
+
+graph export ///
+    "output/linearvsspline2.png", ///
+    width(2400) replace
+
+restore
 
 *==========================================================================
 * 12. ROBUSTNESS: RECCOBEATS-ONLY SAMPLE
@@ -1357,7 +1758,90 @@ display "ALL CORE ROBUSTNESS CHECKS COMPLETED"
 display "============================================================"
 
 *==========================================================================
-* 20. EXPORT FINAL TABLES
+* 20. ROBUSTNESS: MINIMUM USABLE TRACK HISTORIES
+*     Reviewer request: assess sensitivity to short track histories
+*==========================================================================
+
+display "============================================================"
+display "SECTION 20 - MINIMUM USABLE TRACK HISTORIES"
+display "============================================================"
+
+* Number of usable exact-week-lag observations contributed by each track
+capture drop n_usable_track
+bysort track_num: egen n_usable_track = total(sample_weekly == 1)
+
+
+*------------------------------------------------------------
+* 20.1 Require at least 4 usable exact-week-lag observations
+*------------------------------------------------------------
+
+count if sample_weekly == 1 & n_usable_track >= 4
+display "Expected observations with >=4 usable observations: 101428"
+
+capture drop tag_min4
+egen tag_min4 = tag(track_num) if sample_weekly == 1 & n_usable_track >= 4
+
+count if tag_min4 == 1
+display "Expected tracks with >=4 usable observations: 4162"
+
+reg log_streams_check ///
+    c_lag ///
+    nov_dance nov_loud nov_complex nov_onset ///
+    c.nov_dance#c.c_lag ///
+    c.nov_loud#c.c_lag ///
+    c.nov_complex#c.c_lag ///
+    c.nov_onset#c.c_lag ///
+    i.week_fe ///
+    if sample_weekly == 1 & n_usable_track >= 4, ///
+    vce(cluster track_num)
+
+estimates store min4_joint
+
+display "Expected interactions:"
+display "Danceability ≈  0.003186"
+display "Loudness     ≈  0.0007778"
+display "Complexity   ≈  0.0001884"
+display "Onset rate   ≈ -0.0061411"
+
+
+*------------------------------------------------------------
+* 20.2 Require at least 8 usable exact-week-lag observations
+*------------------------------------------------------------
+
+count if sample_weekly == 1 & n_usable_track >= 8
+display "Expected observations with >=8 usable observations: 96175"
+
+capture drop tag_min8
+egen tag_min8 = tag(track_num) if sample_weekly == 1 & n_usable_track >= 8
+
+count if tag_min8 == 1
+display "Expected tracks with >=8 usable observations: 3168"
+
+reg log_streams_check ///
+    c_lag ///
+    nov_dance nov_loud nov_complex nov_onset ///
+    c.nov_dance#c.c_lag ///
+    c.nov_loud#c.c_lag ///
+    c.nov_complex#c.c_lag ///
+    c.nov_onset#c.c_lag ///
+    i.week_fe ///
+    if sample_weekly == 1 & n_usable_track >= 8, ///
+    vce(cluster track_num)
+
+estimates store min8_joint
+
+display "Expected interactions:"
+display "Danceability ≈ -0.0003476"
+display "Loudness     ≈  0.0005681"
+display "Complexity   ≈  0.0002952"
+display "Onset rate   ≈ -0.0051137"
+
+display "============================================================"
+display "MINIMUM-HISTORY ROBUSTNESS CHECKS COMPLETED"
+display "============================================================"
+
+*==========================================================================
+* 21. EXPORT FINAL TABLES
 *==========================================================================
 
 display "============================================================"
@@ -1369,7 +1853,7 @@ capture mkdir "output"
 
 
 *==========================================================================
-* 20.1 MAIN JOINT MODEL TABLE
+* 21.1 MAIN JOINT MODEL TABLE
 *==========================================================================
 
 tempname mainpost
@@ -1420,17 +1904,338 @@ export delimited using ///
     "output/table_main_joint.csv", ///
     replace
 
-export excel using ///
-    "output/final_tables.xlsx", ///
-    sheet("Main joint") ///
-    firstrow(variables) ///
-    replace
+
 
 restore
 
+*==========================================================================
+* 21.2 SAMPLE-SELECTION DIAGNOSTICS
+*==========================================================================
+
+preserve
+
+import delimited using ///
+    "output/sample_selection_track_level.csv", ///
+    clear
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Sample selection") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
 
 *==========================================================================
-* 20.2 FEATURE-SPECIFIC MODELS
+* 21.3 BENCHMARK MODEL COMPARISON
+*     Reviewer request: compare persistence-only and full model fit
+*==========================================================================
+
+tempname benchpost
+tempfile benchtable
+
+postfile `benchpost' ///
+    str30 model ///
+    double r2 adj_r2 rmse ///
+    using `benchtable', replace
+
+
+* Persistence-only benchmark
+estimates restore persistence_benchmark
+
+post `benchpost' ///
+    ("Lag + week FE") ///
+    (e(r2)) ///
+    (e(r2_a)) ///
+    (e(rmse))
+
+
+* Full preferred model
+estimates restore revised_joint
+
+post `benchpost' ///
+    ("Full joint model") ///
+    (e(r2)) ///
+    (e(r2_a)) ///
+    (e(rmse))
+
+postclose `benchpost'
+
+
+preserve
+
+use `benchtable', clear
+
+format r2 adj_r2 rmse %9.6f
+
+list, noobs clean
+
+export delimited using ///
+    "output/table_benchmark_comparison.csv", ///
+    replace
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Benchmark comparison") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
+
+*==========================================================================
+* 21.4 PRACTICAL EFFECT-SIZE TABLE
+*     Reviewer request: express associations as percentage
+*     differences in weekly streams for a +1 SD feature change
+*==========================================================================
+
+tempname practicalpost
+tempfile practicaltable
+
+postfile `practicalpost' ///
+    str20 feature ///
+    str10 popularity ///
+    double pct_difference ///
+    using `practicaltable', replace
+
+
+* Loudness
+post `practicalpost' ///
+    ("Loudness") ("P25") (loud_pct_p25)
+
+post `practicalpost' ///
+    ("Loudness") ("P50") (loud_pct_p50)
+
+post `practicalpost' ///
+    ("Loudness") ("P75") (loud_pct_p75)
+
+
+* Onset rate
+post `practicalpost' ///
+    ("Onset rate") ("P25") (onset_pct_p25)
+
+post `practicalpost' ///
+    ("Onset rate") ("P50") (onset_pct_p50)
+
+post `practicalpost' ///
+    ("Onset rate") ("P75") (onset_pct_p75)
+
+postclose `practicalpost'
+
+
+preserve
+
+use `practicaltable', clear
+
+format pct_difference %9.3f
+
+list, noobs clean
+
+export delimited using ///
+    "output/table_practical_effects.csv", ///
+    replace
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Practical effects") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
+
+*==========================================================================
+* 21.5 ZERO-CROSSING TABLE
+*     Reviewer request: report coefficient ratios only when
+*     interaction terms are sufficiently precise
+*==========================================================================
+
+tempname zeropost
+tempfile zerotable
+
+postfile `zeropost' ///
+    str20 feature ///
+    double zero_crossing se ci_low ci_high ///
+    using `zerotable', replace
+
+
+*------------------------------------------------------------
+* Loudness
+*------------------------------------------------------------
+
+estimates restore revised_joint
+scalar df_zero = e(df_r)
+
+nlcom (loud_zero: ///
+    -_b[nov_loud] / _b[c.nov_loud#c.c_lag]), post
+
+scalar z_b  = _b[loud_zero]
+scalar z_se = _se[loud_zero]
+scalar z_cv = invttail(df_zero, 0.025)
+
+scalar z_lo = z_b - z_cv*z_se
+scalar z_hi = z_b + z_cv*z_se
+
+post `zeropost' ///
+    ("Loudness") ///
+    (z_b) ///
+    (z_se) ///
+    (z_lo) ///
+    (z_hi)
+
+
+*------------------------------------------------------------
+* Onset rate
+*------------------------------------------------------------
+
+estimates restore revised_joint
+
+nlcom (onset_zero: ///
+    -_b[nov_onset] / _b[c.nov_onset#c.c_lag]), post
+
+scalar z_b  = _b[onset_zero]
+scalar z_se = _se[onset_zero]
+
+scalar z_lo = z_b - z_cv*z_se
+scalar z_hi = z_b + z_cv*z_se
+
+post `zeropost' ///
+    ("Onset rate") ///
+    (z_b) ///
+    (z_se) ///
+    (z_lo) ///
+    (z_hi)
+
+postclose `zeropost'
+
+
+preserve
+
+use `zerotable', clear
+
+format zero_crossing se ci_low ci_high %9.3f
+
+list, noobs clean
+
+export delimited using ///
+    "output/table_zero_crossings.csv", ///
+    replace
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Zero crossings") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
+
+* Restore preferred model for subsequent calculations
+estimates restore revised_joint
+
+*==========================================================================
+* 21.6 EMPIRICAL SUPPORT AROUND ZERO-CROSSINGS
+*==========================================================================
+
+tempname supportpost
+tempfile supporttable
+
+postfile `supportpost' ///
+    str20 feature ///
+    double zero_crossing ///
+    long n_below n_above ///
+    double pct_below pct_above ///
+    using `supporttable', replace
+
+
+*------------------------------------------------------------
+* Loudness
+*------------------------------------------------------------
+
+quietly count if ///
+    sample_weekly == 1 & ///
+    c_lag < -1.110257
+
+scalar loud_n_below = r(N)
+
+quietly count if ///
+    sample_weekly == 1 & ///
+    c_lag >= -1.110257
+
+scalar loud_n_above = r(N)
+
+scalar loud_total = loud_n_below + loud_n_above
+
+scalar loud_pct_below = ///
+    100*loud_n_below/loud_total
+
+scalar loud_pct_above = ///
+    100*loud_n_above/loud_total
+
+post `supportpost' ///
+    ("Loudness") ///
+    (-1.110257) ///
+    (loud_n_below) ///
+    (loud_n_above) ///
+    (loud_pct_below) ///
+    (loud_pct_above)
+
+
+*------------------------------------------------------------
+* Onset rate
+*------------------------------------------------------------
+
+quietly count if ///
+    sample_weekly == 1 & ///
+    c_lag < -1.054223
+
+scalar onset_n_below = r(N)
+
+quietly count if ///
+    sample_weekly == 1 & ///
+    c_lag >= -1.054223
+
+scalar onset_n_above = r(N)
+
+scalar onset_total = onset_n_below + onset_n_above
+
+scalar onset_pct_below = ///
+    100*onset_n_below/onset_total
+
+scalar onset_pct_above = ///
+    100*onset_n_above/onset_total
+
+post `supportpost' ///
+    ("Onset rate") ///
+    (-1.054223) ///
+    (onset_n_below) ///
+    (onset_n_above) ///
+    (onset_pct_below) ///
+    (onset_pct_above)
+
+postclose `supportpost'
+
+
+preserve
+
+use `supporttable', clear
+
+format zero_crossing %9.3f
+format pct_below pct_above %9.1f
+
+list, noobs clean
+
+export delimited using ///
+    "output/table_zero_crossing_support.csv", ///
+    replace
+
+export excel using ///
+    "output/final_tables.xlsx", ///
+    sheet("Zero support") ///
+    firstrow(variables) ///
+    sheetreplace
+
+restore
+
+*==========================================================================
+* 21.7 FEATURE-SPECIFIC MODELS
 *==========================================================================
 
 tempname fspost
@@ -1530,7 +2335,7 @@ restore
 
 
 *==========================================================================
-* 20.3 ROBUSTNESS MATRIX
+* 21.8 ROBUSTNESS MATRIX
 *
 * Each row reports the four state-dependence interaction coefficients
 * and their p-values.
@@ -1807,6 +2612,48 @@ scalar op = 2*ttail(e(df_r),abs(ob/_se[c.znov_onset#c.c_lag]))
 post `robpost' ("Within-week standardized") ///
     (db) (dp) (lb) (lp) (cb) (cp) (ob) (op)
 
+*-----------------------------------------------------------------------
+* Minimum 4 usable exact-week-lag observations
+*-----------------------------------------------------------------------
+
+estimates restore min4_joint
+
+scalar db = _b[c.nov_dance#c.c_lag]
+scalar dp = 2*ttail(e(df_r),abs(db/_se[c.nov_dance#c.c_lag]))
+
+scalar lb = _b[c.nov_loud#c.c_lag]
+scalar lp = 2*ttail(e(df_r),abs(lb/_se[c.nov_loud#c.c_lag]))
+
+scalar cb = _b[c.nov_complex#c.c_lag]
+scalar cp = 2*ttail(e(df_r),abs(cb/_se[c.nov_complex#c.c_lag]))
+
+scalar ob = _b[c.nov_onset#c.c_lag]
+scalar op = 2*ttail(e(df_r),abs(ob/_se[c.nov_onset#c.c_lag]))
+
+post `robpost' ("Minimum 4 usable observations") ///
+    (db) (dp) (lb) (lp) (cb) (cp) (ob) (op)
+
+
+*-----------------------------------------------------------------------
+* Minimum 8 usable exact-week-lag observations
+*-----------------------------------------------------------------------
+
+estimates restore min8_joint
+
+scalar db = _b[c.nov_dance#c.c_lag]
+scalar dp = 2*ttail(e(df_r),abs(db/_se[c.nov_dance#c.c_lag]))
+
+scalar lb = _b[c.nov_loud#c.c_lag]
+scalar lp = 2*ttail(e(df_r),abs(lb/_se[c.nov_loud#c.c_lag]))
+
+scalar cb = _b[c.nov_complex#c.c_lag]
+scalar cp = 2*ttail(e(df_r),abs(cb/_se[c.nov_complex#c.c_lag]))
+
+scalar ob = _b[c.nov_onset#c.c_lag]
+scalar op = 2*ttail(e(df_r),abs(ob/_se[c.nov_onset#c.c_lag]))
+
+post `robpost' ("Minimum 8 usable observations") ///
+    (db) (dp) (lb) (lp) (cb) (cp) (ob) (op)
 
 postclose `robpost'
 
@@ -1840,7 +2687,7 @@ display "============================================================"
 
 
 *==========================================================================
-* 21. EXPORT FINAL FIGURES
+* 22. EXPORT FINAL FIGURES
 *==========================================================================
 
 display "============================================================"
@@ -1848,7 +2695,7 @@ display "SECTION 21 - EXPORT FINAL FIGURES"
 display "============================================================"
 
 *------------------------------------------------------------
-* 21.1 Loudness marginal association
+* 22.1 Loudness marginal association
 *------------------------------------------------------------
 
 graph display g_loud
@@ -1863,7 +2710,7 @@ graph export ///
 
 
 *------------------------------------------------------------
-* 21.2 Onset-rate marginal association
+* 22.2 Onset-rate marginal association
 *------------------------------------------------------------
 
 graph display g_onset
@@ -1878,7 +2725,7 @@ graph export ///
 
 
 *------------------------------------------------------------
-* 21.3 Combined figure
+* 22.3 Combined figure
 *------------------------------------------------------------
 
 graph combine g_loud g_onset, ///
